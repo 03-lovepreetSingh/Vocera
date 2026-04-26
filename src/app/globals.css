@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* PRD §5.3 design tokens */
+    --paper: #ffffff;
+    --fill: #f6f7f9;
+    --ink: #0e1116;
+    --ink-3: #6b7280;
+    --accent: #0ea5a4;
+    --accent-soft: #ccfbf1;
+    --line-soft: #e5e7eb;
+  }
+
+  .dark {
+    --paper: #0b0d10;
+    --fill: #0f1115;
+    --ink: #f1f3f5;
+    --ink-3: #9ca3af;
+    --accent: #5eead4;
+    --accent-soft: #134e4a;
+    --line-soft: #1f2937;
+  }
+
+  html, body {
+    background: var(--fill);
+    color: var(--ink);
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--ink);
+  }
+}

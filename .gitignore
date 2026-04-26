@@ -1,0 +1,51 @@
+# dependencies
+node_modules
+.pnpm-store
+.yarn
+
+# build / framework output
+.next
+out
+dist
+build
+*.tsbuildinfo
+
+# env (commit only .env.example)
+.env
+.env.*
+.env.example
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# test / coverage
+coverage
+.nyc_output
+playwright-report
+test-results
+
+# runtime data (local-only knowledge uploads land here)
+uploads
+
+# editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# tooling caches
+.turbo
+.cache
+.eslintcache
+
+# Claude Code local settings (per-machine, not for the repo)
+.claude

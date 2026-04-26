@@ -87,3 +87,63 @@ export const agentLeadFields = pgTable(
   },
   (t) => ({ uniq: uniqueIndex('agent_lead_fields_uniq').on(t.agentId, t.fieldKey) }),
 );
+
+/**
+ * Deployments — surfaces an agent is exposed through (voice / web-widget / sms / etc).
+ * One agent can have many deployments. Workspace-scoped via RLS.
+ */
+export const deployments = pgTable(
+  'deployments',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    externalId: text('external_id').notNull().unique(),
+    workspaceId: bigint('workspace_id', { mode: 'number' })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    agentId: bigint('agent_id', { mode: 'number' })
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    surface: text('surface').notNull(), // 'voice' | 'web' | 'sms' | 'custom'
+    name: text('name'),
+    status: text('status').notNull().default('active'), // 'active' | 'paused' | 'archived'
+    config: jsonb('config').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    wsIdx: index('deployments_ws_idx').on(t.workspaceId),
+    agentIdx: index('deployments_agent_idx').on(t.agentId),
+  }),
+);
+
+/**
+ * Voice-specific deployment row. 1:1 with deployments where surface='voice'.
+ * Carries the webhook token + signing secret used by Twilio / outbound APIs.
+ */
+export const voiceDeployments = pgTable(
+  'voice_deployments',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    deploymentId: bigint('deployment_id', { mode: 'number' })
+      .notNull()
+      .references(() => deployments.id, { onDelete: 'cascade' }),
+    workspaceId: bigint('workspace_id', { mode: 'number' })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    // Token embedded in the public webhook URL (https://voice.vocera.ai/ivr/wsk_xxx)
+    webhookToken: text('webhook_token').notNull().unique(),
+    // HMAC secret used to sign/verify outbound webhook requests.
+    signingSecret: text('signing_secret').notNull(),
+    // Which integration paths the user enabled — IVR, outbound, custom.
+    surfaces: jsonb('surfaces').notNull().default({ ivr: true, outbound: false, custom: false }),
+    // Optional ElevenLabs voice override beyond what the agent version specifies.
+    voiceId: text('voice_id'),
+    speechSpeed: real('speech_speed').notNull().default(1.0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    deploymentIdx: uniqueIndex('voice_deployments_deployment_uniq').on(t.deploymentId),
+    wsIdx: index('voice_deployments_ws_idx').on(t.workspaceId),
+  }),
+);

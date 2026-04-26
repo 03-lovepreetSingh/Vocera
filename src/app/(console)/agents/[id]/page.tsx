@@ -1,13 +1,22 @@
-import { and, desc, eq } from 'drizzle-orm';
-import { notFound } from 'next/navigation';
-import { AppTopbar } from '@/components/layout/AppTopbar';
-import { TalkButton } from '@/components/voice/TalkButton';
 import { KnowledgeUploader } from '@/components/knowledge/KnowledgeUploader';
+import { TalkButton } from '@/components/voice/TalkButton';
 import { withWorkspace } from '@/db/client';
 import { agentVersions, agents, knowledgeFiles } from '@/db/schema';
 import { auth } from '@/server/auth/config';
+import { and, desc, eq } from 'drizzle-orm';
+import { notFound } from 'next/navigation';
+import { BasicInfoForm } from './BasicInfoForm';
 
-export default async function AgentDetailPage({ params }: { params: { id: string } }) {
+/**
+ * Basic Info tab — the default landing for an agent's builder.
+ *
+ * Shows an editable form for the non-versioned `agents` row (name / purpose /
+ * industry / audience / status), the language list + default + auto-detect
+ * (versioned — saving forks a new version), the Knowledge upload card, and a
+ * sidebar Talk-to-agent test panel. Topbar + sub-nav are owned by the parent
+ * layout; this page focuses purely on Basic Info content.
+ */
+export default async function AgentBasicInfoPage({ params }: { params: { id: string } }) {
   const session = await auth();
   const wsId = session?.user?.workspaceId;
   if (!wsId) return null;
@@ -42,65 +51,67 @@ export default async function AgentDetailPage({ params }: { params: { id: string
   const { agent, version, files } = data;
 
   return (
-    <>
-      <AppTopbar title={agent.name} />
-      <main className="flex-1 px-6 py-6">
-        <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
-          <section className="grid gap-6">
-            <Card title="Overview">
-              <Pair k="Purpose" v={agent.purpose} />
-              <Pair k="Status" v={agent.status} />
-              <Pair k="Version" v={`v${agent.currentVersion}`} />
-              <Pair k="Languages" v={(version?.languages ?? []).join(', ') || '—'} />
-              <Pair k="Default language" v={version?.defaultLanguage ?? '—'} />
-              <Pair k="Auto-detect" v={version?.autoDetectLanguage ? 'on' : 'off'} />
-            </Card>
+    <div className="px-6 py-6">
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold">Basic info</h2>
+        <p className="text-sm text-ink-3">
+          Who the agent is, who it talks to, and which languages it speaks.
+        </p>
+      </div>
 
-            <Card title="System prompt">
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-fill p-3 font-mono text-xs">
-                {version?.systemPrompt}
-              </pre>
-            </Card>
+      <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+        <section className="grid gap-6">
+          <div className="rounded-lg border border-line-soft bg-paper px-5 py-4">
+            <BasicInfoForm
+              agentExternalId={agent.externalId}
+              initial={{
+                name: agent.name,
+                purpose: agent.purpose,
+                industry: agent.industry ?? '',
+                audience: agent.audience ?? '',
+                description: agent.description ?? '',
+                status: (agent.status as 'draft' | 'live') ?? 'draft',
+                languages: (version?.languages as string[]) ?? ['en-US'],
+                defaultLanguage: version?.defaultLanguage ?? 'en-US',
+                autoDetectLanguage: version?.autoDetectLanguage ?? true,
+              }}
+            />
+          </div>
 
-            <Card title="Knowledge base">
-              <KnowledgeUploader agentExternalId={agent.externalId} files={files.map((f) => ({
+          <div id="knowledge" className="rounded-lg border border-line-soft bg-paper px-5 py-4">
+            <div className="mb-3 text-sm font-semibold">Knowledge base</div>
+            <KnowledgeUploader
+              agentExternalId={agent.externalId}
+              files={files.map((f) => ({
                 externalId: f.externalId,
                 filename: f.filename,
                 status: f.status,
                 chunkCount: f.chunkCount,
-              }))} />
-            </Card>
-          </section>
+              }))}
+            />
+          </div>
+        </section>
 
-          <aside className="grid gap-6">
-            <Card title="Talk to agent (test)">
-              <TalkButton agentExternalId={agent.externalId} />
-              <p className="mt-3 text-xs text-ink-3">
-                Speak in {(version?.languages ?? []).join(' / ')}. Response should arrive in
-                under a second.
-              </p>
-            </Card>
-          </aside>
-        </div>
-      </main>
-    </>
-  );
-}
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-line-soft bg-paper px-5 py-4">
-      <div className="mb-3 text-sm font-semibold">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function Pair({ k, v }: { k: string; v: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-[160px_1fr] gap-3 border-b border-line-soft py-2 text-sm last:border-b-0">
-      <span className="text-ink-3">{k}</span>
-      <span className="font-medium">{v}</span>
+        <aside className="grid h-fit gap-6">
+          <div className="rounded-lg border border-line-soft bg-paper px-5 py-4">
+            <div className="mb-3 text-sm font-semibold">Talk to agent (test)</div>
+            <TalkButton agentExternalId={agent.externalId} />
+            <p className="mt-3 text-xs text-ink-3">
+              Speak in {((version?.languages as string[]) ?? []).join(' / ')}. Response should
+              arrive in under a second.
+            </p>
+          </div>
+          <div className="rounded-lg border border-line-soft bg-paper px-5 py-4 text-xs text-ink-3">
+            <div className="mb-1 font-medium text-ink-2">Version</div>
+            <div>
+              v{agent.currentVersion} · {agent.status}
+            </div>
+            <div className="mt-2">
+              Editing prompt or voice settings creates a new version automatically.
+            </div>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

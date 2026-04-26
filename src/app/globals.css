@@ -3,29 +3,53 @@
 @tailwind utilities;
 
 @layer base {
+  /* Light theme — exact hex values from /tmp/design/test-1/project/styles.css :root */
   :root {
-    /* PRD §5.3 design tokens */
-    --paper: #ffffff;
-    --fill: #f6f7f9;
-    --ink: #0e1116;
-    --ink-3: #6b7280;
-    --accent: #0ea5a4;
-    --accent-soft: #ccfbf1;
-    --line-soft: #e5e7eb;
+    --bg:           #f4f1ea;
+    --paper:        #ffffff;
+    --ink:          #17171a;
+    --ink-2:        #3c3c42;
+    --ink-3:        #6b6b72;
+    --ink-4:        #9a9aa0;
+    --line:         #1a1a1d;
+    --line-soft:    #d8d4cb;
+    --line-softer:  #e8e4db;
+    --fill:         #f0ece3;
+    --fill-2:       #e6e0d3;
+    --accent:       #0ea5a4;
+    --accent-2:     #67e8f9;
+    --accent-soft:  #cdeeee;
+    --warn:         #d97706;
+    --ok:           #15803d;
+    --err:          #b91c1c;
+    --radius:       10px;
+    --radius-lg:    14px;
+    --shadow-sm:    0 1px 2px rgba(20, 20, 24, 0.05);
+    --shadow:       0 4px 14px rgba(20, 20, 24, 0.06), 0 1px 3px rgba(20, 20, 24, 0.04);
   }
 
-  .dark {
-    --paper: #0b0d10;
-    --fill: #0f1115;
-    --ink: #f1f3f5;
-    --ink-3: #9ca3af;
-    --accent: #5eead4;
-    --accent-soft: #134e4a;
-    --line-soft: #1f2937;
+  /* Dark theme — exact hex values from /tmp/design/test-1/project/styles.css html[data-theme="dark"] */
+  html[data-theme='dark'] {
+    --bg:           #0b0d10;
+    --paper:        #12151a;
+    --ink:          #f1f3f5;
+    --ink-2:        #c9cdd2;
+    --ink-3:        #8a9099;
+    --ink-4:        #5a6068;
+    --line:         #e6e9ed;
+    --line-soft:    #2a2f36;
+    --line-softer:  #1c2026;
+    --fill:         #181c22;
+    --fill-2:       #1f242b;
+    --accent:       #2dd4d3;
+    --accent-2:     #67e8f9;
+    --accent-soft:  #16363a;
+    --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow:       0 6px 20px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.35);
   }
 
   html, body {
-    background: var(--fill);
+    background: var(--bg);
     color: var(--ink);
     font-family: 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;

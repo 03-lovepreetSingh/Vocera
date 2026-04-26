@@ -9,12 +9,76 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 
+/**
+ * Cache of voices actually available to this ElevenLabs account. Populated on
+ * first use by hitting GET /v1/voices. Hard-coded voice ids (e.g. Rachel) only
+ * work if they're in the user's library; new free-tier accounts have a much
+ * smaller default set than the public catalog suggests, and synthesizing
+ * against an unknown id silently produces zero audio.
+ */
+let _availableVoiceIds: Set<string> | null = null;
+let _availableVoiceIdList: string[] = [];
+let _voicesPromise: Promise<void> | null = null;
+
+async function loadAvailableVoices(): Promise<void> {
+  if (_availableVoiceIds) return;
+  if (_voicesPromise) return _voicesPromise;
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) throw new Error('ELEVENLABS_API_KEY not set');
+  _voicesPromise = (async () => {
+    const res = await fetch('https://api.elevenlabs.io/v1/voices', {
+      headers: { 'xi-api-key': apiKey },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`ElevenLabs /voices ${res.status}: ${body}`);
+    }
+    const json = (await res.json()) as { voices: { voice_id: string; name: string }[] };
+    _availableVoiceIdList = json.voices.map((v) => v.voice_id);
+    _availableVoiceIds = new Set(_availableVoiceIdList);
+    console.log(
+      '[elevenlabs] available voices in account:',
+      json.voices.map((v) => `${v.name}(${v.voice_id.slice(0, 6)})`).join(', '),
+    );
+  })().catch((err) => {
+    // If the discovery call rejects (free-tier missing voices_read scope is
+    // typical), reset so subsequent sessions can retry — without this, every
+    // future session inherits a permanently rejected promise.
+    _voicesPromise = null;
+    throw err;
+  });
+  return _voicesPromise;
+}
+
+/**
+ * Resolve a usable voice id given a preferred one. Falls back to the first
+ * voice in the user's library if the preferred id isn't accessible.
+ */
+export async function resolveVoiceId(preferred: string): Promise<string | null> {
+  await loadAvailableVoices().catch((err) => {
+    console.warn('[elevenlabs] failed to load voices, will try preferred id anyway:', err);
+  });
+  if (!_availableVoiceIds) return preferred || null;
+  if (_availableVoiceIds.has(preferred)) return preferred;
+  const fallback = _availableVoiceIdList[0] ?? null;
+  if (fallback) {
+    console.warn(
+      `[elevenlabs] preferred voice ${preferred} not in account; falling back to ${fallback}`,
+    );
+  }
+  return fallback;
+}
+
 export interface TTSOptions {
   /** ElevenLabs voice id (resolved from agent_versions.voice_map per language). */
   voiceId: string;
   /** Language code (used for the multilingual model — supports 32 languages). */
   language?: string;
-  /** Output format — pcm_16000 keeps decoding ~free in the browser. */
+  /**
+   * Output format. Default `mp3_44100_128` — works on every ElevenLabs tier
+   * including free. `pcm_16000` is paid-tier only and silently produces zero
+   * audio on free, which is the trap we're avoiding.
+   */
   format?: 'pcm_16000' | 'mp3_44100_128';
 }
 
@@ -40,7 +104,7 @@ export class ElevenLabsStream extends EventEmitter {
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) return Promise.reject(new Error('ELEVENLABS_API_KEY not set'));
 
-    const format = this.opts.format ?? 'pcm_16000';
+    const format = this.opts.format ?? 'mp3_44100_128';
     const url =
       `wss://api.elevenlabs.io/v1/text-to-speech/${this.opts.voiceId}/stream-input` +
       `?model_id=eleven_flash_v2_5&output_format=${format}&optimize_streaming_latency=4`;
@@ -63,6 +127,15 @@ export class ElevenLabsStream extends EventEmitter {
       this.ws!.once('error', (err) => {
         this.emit('event', { type: 'error', error: String(err) });
         reject(err);
+      });
+      this.ws!.on('unexpected-response', (_req, res) => {
+        let body = '';
+        res.on('data', (c) => {
+          body += c.toString();
+        });
+        res.on('end', () => {
+          console.warn('[elevenlabs] unexpected-response', res.statusCode, body);
+        });
       });
       this.ws!.on('message', (raw) => this.handleMessage(raw.toString()));
       this.ws!.on('close', () => this.emit('event', { type: 'final' }));

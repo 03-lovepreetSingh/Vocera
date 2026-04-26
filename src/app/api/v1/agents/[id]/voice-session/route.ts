@@ -10,20 +10,27 @@ import { auth } from '@/server/auth/config';
 import { issueSession } from '@/server/ws/sessions';
 
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
-  const session = await auth();
-  const wsId = session?.user?.workspaceId;
-  if (!wsId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  try {
+    const session = await auth();
+    const wsId = session?.user?.workspaceId;
+    if (!wsId) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const found = await withWorkspace(wsId, (tx) =>
-    tx
-      .select({ id: agents.id })
-      .from(agents)
-      .where(and(eq(agents.workspaceId, wsId), eq(agents.externalId, params.id)))
-      .limit(1)
-      .then((rows) => rows[0]),
-  );
-  if (!found) return NextResponse.json({ error: 'agent not found' }, { status: 404 });
+    const found = await withWorkspace(wsId, (tx) =>
+      tx
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.workspaceId, wsId), eq(agents.externalId, params.id)))
+        .limit(1)
+        .then((rows) => rows[0]),
+    );
+    if (!found) return NextResponse.json({ error: 'agent not found' }, { status: 404 });
 
-  const token = await issueSession({ workspaceId: wsId, agentId: found.id });
-  return NextResponse.json({ token });
+    const token = await issueSession({ workspaceId: wsId, agentId: found.id });
+    // Don't log the token itself — it's a bearer credential for the WS.
+    console.log('[voice-session] minted token for agent', params.id);
+    return NextResponse.json({ token });
+  } catch (err) {
+    console.error('[voice-session] FAILED', err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
 }

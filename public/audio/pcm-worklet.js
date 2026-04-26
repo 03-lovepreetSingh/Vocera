@@ -27,7 +27,9 @@ class PcmWorklet extends AudioWorkletProcessor {
     // Linear-interpolation downsampler. ratio is typically 48000/16000 = 3.
     let i = 0;
     while (i < ch.length) {
-      const next = Math.floor(this.acc + this.ratio);
+      let step = Math.floor(this.acc + this.ratio);
+      if (step < 1) step = 1; // Prevent infinite loop if sampleRate < 16000
+      const next = i + step;
       // Average from i..next for smoother downsample than nearest-neighbor.
       const end = Math.min(next, ch.length);
       let sum = 0;
@@ -44,8 +46,8 @@ class PcmWorklet extends AudioWorkletProcessor {
         this.port.postMessage(this.outBuf.buffer.slice(0));
         this.outIdx = 0;
       }
-      i = end;
-      this.acc = (this.acc + this.ratio) - Math.floor(this.acc + this.ratio);
+      i = next;
+      this.acc = (this.acc + this.ratio) - step;
     }
     return true;
   }

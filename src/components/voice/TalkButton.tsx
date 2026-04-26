@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Mic, Square } from '@/components/icons';
 import { VoiceClient } from '@/lib/audio/client';
 
@@ -16,14 +16,35 @@ interface TranscriptLine {
 
 export function TalkButton({ agentExternalId }: Props) {
   const [active, setActive] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [partial, setPartial] = useState<string>('');
   const [ttft, setTtft] = useState<number | null>(null);
   const clientRef = useRef<VoiceClient | null>(null);
   const liveAgentRef = useRef<string>('');
+  // Ref-tracked "currently starting" used inside async start() — refs don't
+  // close over stale React renders the way state does, so this is the safe
+  // re-entrancy guard. The button's `disabled` state below uses the React
+  // state mirror so the UI updates instantly.
+  const startingRef = useRef(false);
+
+  // Tear down on unmount (route change, HMR, navigation away).
+  useEffect(
+    () => () => {
+      try {
+        clientRef.current?.stop();
+      } catch {}
+      clientRef.current = null;
+      startingRef.current = false;
+    },
+    [],
+  );
 
   async function start() {
+    if (startingRef.current || clientRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
     setError(null);
     setLines([]);
     setPartial('');
@@ -70,13 +91,25 @@ export function TalkButton({ agentExternalId }: Props) {
     } catch (err) {
       setError(String(err));
       client.stop();
+    } finally {
+      // Always reset the starting flags — without this, a failed start would
+      // permanently lock the button until the component unmounts.
+      startingRef.current = false;
+      setStarting(false);
     }
   }
 
   function stop() {
-    clientRef.current?.stop();
+    try {
+      clientRef.current?.stop();
+    } catch (err) {
+      console.warn('TalkButton stop error', err);
+    }
     clientRef.current = null;
+    startingRef.current = false;
+    setStarting(false);
     setActive(false);
+    setPartial('');
   }
 
   return (
@@ -84,12 +117,13 @@ export function TalkButton({ agentExternalId }: Props) {
       <button
         type="button"
         onClick={active ? stop : start}
-        className={`flex h-14 w-full items-center justify-center gap-2 rounded-md font-medium ${
+        disabled={starting}
+        className={`flex h-14 w-full items-center justify-center gap-2 rounded-md font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
           active ? 'bg-red-500 text-white' : 'bg-accent text-paper'
         } hover:opacity-90`}
       >
         {active ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-        {active ? 'End conversation' : 'Talk to agent'}
+        {starting ? 'Connecting…' : active ? 'End conversation' : 'Talk to agent'}
       </button>
 
       {error && <p className="mt-2 text-sm text-red-500">{error}</p>}

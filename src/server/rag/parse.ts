@@ -17,8 +17,9 @@ export interface ParseResult {
 
 export async function parseDocument(filepath: string, mime: string): Promise<ParseResult> {
   if (mime === 'application/pdf' || filepath.toLowerCase().endsWith('.pdf')) {
-    // pdf-parse is CommonJS — dynamic import keeps it out of the Edge bundle.
-    const pdfParse = (await import('pdf-parse')).default;
+    // Import the inner module — pdf-parse's index.js runs debug code on import
+    // that tries to read a hardcoded test PDF and crashes with ENOENT.
+    const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default;
     const buf = await readFile(filepath);
     const out = await pdfParse(buf);
     return { text: out.text, pageCount: out.numpages };

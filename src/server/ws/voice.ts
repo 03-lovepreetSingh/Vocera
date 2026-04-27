@@ -175,6 +175,10 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
       } else if (inboundBinaryFrames % 100 === 0) {
         console.log('[ws/voice] inbound audio: frames=', inboundBinaryFrames, 'bytes=', inboundBinaryBytes);
       }
+      // Defense-in-depth: even if the browser gating fails (race, stale
+      // ttsPlaying flag), don't forward mic frames to Deepgram while the
+      // agent is mid-utterance — they're almost certainly speaker echo.
+      if (pipeline.isSpeaking()) return;
       stt.send(raw as Buffer);
     } else {
       try {

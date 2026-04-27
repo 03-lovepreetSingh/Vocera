@@ -12,6 +12,9 @@ import { type ChatMessage, streamCompletion } from '@/server/ai/llm';
 import { queryTopK } from '@/server/rag/pinecone';
 import { pineconeNamespace } from '@/server/ids';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const Schema = z.object({
   message: z.string().min(1).max(4000),
   history: z

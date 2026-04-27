@@ -148,9 +148,18 @@ export class VoicePipeline {
     });
     tts.on('event', (e) => {
       if (e.type === 'audio') {
+        if (!elProducedAudio) {
+          // First audio chunk has left the building — agent is now audibly
+          // speaking. Flip `speaking` on so any user audio frames Deepgram
+          // sees from this point are treated as a potential barge-in. We
+          // don't flip it on at turn-start because VAD residual from the
+          // user's just-finalized utterance would self-abort the turn.
+          this.speaking = true;
+        }
         elProducedAudio = true;
         this.cb.onAudio(e.data);
       } else if (e.type === 'final') {
+        this.speaking = false;
         this.cb.onAudioDone();
       } else if (e.type === 'error') {
         console.warn('[pipeline] ElevenLabs error:', e.error);
@@ -268,6 +277,12 @@ export class VoicePipeline {
       this.cancelInFlight();
       this.cb.onClear();
     }
+  }
+
+  /** True while audio is streaming to the browser — used by the WS handler to
+   * drop inbound mic frames so the agent's own voice can't be re-transcribed. */
+  isSpeaking(): boolean {
+    return this.speaking;
   }
 
   /**

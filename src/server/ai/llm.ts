@@ -100,8 +100,11 @@ function gemini() {
 /**
  * Free-tier-friendly fallback chain. We attempt each model in order; on a
  * 429 (quota) or 404 (deprecated/unavailable) error we fall through to the
- * next. Newest chat Flash first — `gemini-3-flash-preview` per the user's
- * preference, then proven-stable Flash variants.
+ * next.
+ *
+ * Order is empirically tuned: `gemini-2.5-flash-lite` has separate (often
+ * un-exhausted) free-tier streaming quota from the heavier Flash variants
+ * and consistently replies under 1.5s. Heavier models follow as fallbacks.
  *
  * NOTE: only models that support `generateContent` belong here. TTS-suffixed
  * models (e.g. `gemini-3.1-flash-tts-preview`) generate audio only and would
@@ -109,9 +112,10 @@ function gemini() {
  */
 const GEMINI_MODEL_CHAIN = [
   process.env.GEMINI_MODEL,
+  'gemini-2.5-flash-lite',   // independent quota bucket — usually free even when other Flash models 429
   'gemini-2.5-flash',        // proven fast (~2s), full replies
-  'gemini-flash-latest',     // fastest TTFT (~1.5s), auto-aliases to current
-  'gemini-3-flash-preview',  // preview — sometimes returns truncated, last resort
+  'gemini-flash-latest',     // alias to current Flash, often shares quota with above
+  'gemini-3-flash-preview',  // preview — sometimes returns truncated
   'gemini-2.0-flash',        // free-tier daily quota often exhausted but try
 ].filter(Boolean) as string[];
 

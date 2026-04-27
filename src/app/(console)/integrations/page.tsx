@@ -316,7 +316,9 @@ function ApiKeysPanel() {
             <div className="truncate font-medium">{k.name}</div>
             <div className="truncate font-mono text-ink-3">{k.masked}</div>
             <div className="text-ink-3">{formatDate(k.createdAt)}</div>
-            <div className="text-ink-3">{k.lastUsedAt ? formatRel(k.lastUsedAt) : '—'}</div>
+            <div className="text-ink-3" suppressHydrationWarning>
+              {k.lastUsedAt ? formatRel(k.lastUsedAt) : '—'}
+            </div>
             <div className="relative flex justify-end">
               <button
                 type="button"
@@ -697,8 +699,13 @@ function ToggleRow({
 // ---------------------------------------------------------------------------
 
 function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' });
+  // Explicit locale + UTC keeps SSR and client-hydration output identical.
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 function formatRel(iso: string): string {

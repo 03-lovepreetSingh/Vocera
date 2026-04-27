@@ -5,7 +5,7 @@ const config = {
     serverActions: { bodySizeLimit: '110mb' },
     serverComponentsExternalPackages: ['pg', 'argon2', 'pdf-parse', 'mammoth', 'ws'],
   },
-  webpack: (cfg, { isServer, dev }) => {
+  webpack: (cfg, { isServer }) => {
     cfg.resolve.alias = { ...cfg.resolve.alias, canvas: false };
     if (!isServer) {
       cfg.resolve.fallback = {
@@ -17,17 +17,13 @@ const config = {
         tls: false,
         dns: false,
       };
-      // Inline the webpack runtime into every entry so `__webpack_require__.n`
-      // and friends are always available. Without this, Next 14 + dev mode +
-      // certain custom-server setups intermittently load chunks before the
-      // runtime helpers are registered, causing "n is not a function".
-      if (dev) {
-        cfg.optimization = {
-          ...(cfg.optimization ?? {}),
-          runtimeChunk: false,
-          splitChunks: false,
-        };
-      }
+      // The dev-only `splitChunks: false` workaround that previously lived here
+      // was for a `__webpack_require__.n is not a function` crash caused by
+      // lucide-react. Lucide is gone (replaced with inline icons in
+      // src/components/icons.tsx), so the workaround is no longer needed —
+      // and disabling chunk-splitting was making every page bundle one big
+      // chunk, so any edit re-hashed every page and triggered chronic
+      // ChunkLoadError on stale tabs. Restoring Next 14 defaults here.
     }
     return cfg;
   },

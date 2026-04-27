@@ -1,0 +1,12 @@
+server.ts
+ws-server.ts
+src/server/ws/
+scripts/
+drizzle/
+uploads/
+.env
+.env.*
+*.log
+playwright-report/
+test-results/
+e2e/

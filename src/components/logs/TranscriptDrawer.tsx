@@ -586,7 +586,7 @@ export function LogsView({ rows, agentNames }: LogsViewProps) {
                         <td className="px-4 py-2.5">
                           <StatusPill status={r.status} />
                         </td>
-                        <td className="px-4 py-2.5 text-ink-3">
+                        <td className="px-4 py-2.5 text-ink-3" suppressHydrationWarning>
                           {relativeTime(r.startedAt)}
                         </td>
                       </tr>

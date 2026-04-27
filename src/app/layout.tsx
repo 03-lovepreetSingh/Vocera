@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { ChunkErrorRecovery } from '@/components/error/ChunkErrorRecovery';
 import { ThemeProvider } from '@/components/theme/ThemeProvider';
 
 export const metadata: Metadata = {
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
       <body>
+        <ChunkErrorRecovery />
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

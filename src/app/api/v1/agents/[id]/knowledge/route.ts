@@ -12,6 +12,9 @@ import { auth } from '@/server/auth/config';
 import { newId } from '@/server/ids';
 import { ingestFile } from '@/server/rag/ingest';
 
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+
 const ACCEPTED = new Set([
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -97,8 +100,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       file: { externalId: fileExt, status: 'indexed', chunkCount: result.chunkCount },
     });
   } catch (err) {
+    console.error('[knowledge/upload] ingest failed', {
+      file: file.name,
+      mime,
+      agent: found.externalId,
+      error: err instanceof Error ? { message: err.message, stack: err.stack } : err,
+    });
     return NextResponse.json(
-      { file: { externalId: fileExt, status: 'failed' }, error: String(err) },
+      {
+        file: { externalId: fileExt, status: 'failed' },
+        error: err instanceof Error ? err.message : String(err),
+      },
       { status: 500 },
     );
   }

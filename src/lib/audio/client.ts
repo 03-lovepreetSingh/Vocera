@@ -54,7 +54,27 @@ export class VoiceClient {
   private currentAudioEl: HTMLAudioElement | null = null;
   private micStartScheduled = false;
 
+  // Half-duplex gating. While TTS is producing sound (HTMLAudio or
+  // SpeechSynthesis), drop mic frames before they reach the WS — otherwise the
+  // agent's own voice leaks back through the speakers, gets captured by the
+  // mic, and Deepgram transcribes it as the user. `muteMicUntil` adds a tail
+  // window after TTS ends to absorb room reverb / late audio buffer flush.
+  private ttsPlaying = false;
+  private muteMicUntil = 0;
+  private static readonly MIC_TAIL_MS = 350;
+
   constructor(private opts: VoiceClientOptions) {}
+
+  private isMicMuted(): boolean {
+    return this.ttsPlaying || Date.now() < this.muteMicUntil;
+  }
+
+  private setTtsPlaying(playing: boolean) {
+    this.ttsPlaying = playing;
+    if (!playing) {
+      this.muteMicUntil = Date.now() + VoiceClient.MIC_TAIL_MS;
+    }
+  }
 
   async start() {
     // 1. Mint a session token.
@@ -129,7 +149,11 @@ export class VoiceClient {
       const src = ctx.createMediaStreamSource(stream);
       const node = new AudioWorkletNode(ctx, 'pcm-worklet');
       node.port.onmessage = (ev) => {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(ev.data);
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        // Half-duplex: drop frames while the agent is talking (and for a brief
+        // tail after) so the speaker→mic path can't echo into Deepgram.
+        if (this.isMicMuted()) return;
+        this.ws.send(ev.data);
       };
       src.connect(node);
       // CRITICAL: route the worklet output to a muted gain → destination.
@@ -176,6 +200,7 @@ export class VoiceClient {
             const synth = window.speechSynthesis;
             if (synth && (synth.speaking || synth.pending)) synth.cancel();
           } catch {}
+          this.setTtsPlaying(false);
           return;
         }
         if (t === 'audio_done') {
@@ -212,13 +237,22 @@ export class VoiceClient {
     this.pendingAudioChunks = [];
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
-    audio.addEventListener('ended', () => {
+    const release = () => {
       URL.revokeObjectURL(url);
       if (this.currentAudioEl === audio) this.currentAudioEl = null;
+      this.setTtsPlaying(false);
+    };
+    audio.addEventListener('play', () => this.setTtsPlaying(true));
+    audio.addEventListener('ended', release);
+    audio.addEventListener('pause', () => {
+      // Pause without ended (e.g., barge-in clear) — same gating cleanup.
+      if (audio.currentTime < audio.duration) release();
     });
+    audio.addEventListener('error', release);
     this.currentAudioEl = audio;
     audio.play().catch((err) => {
       console.warn('audio playback blocked', err);
+      release();
     });
   }
 
@@ -248,9 +282,18 @@ export class VoiceClient {
         }
         u.rate = 1.0;
         u.pitch = 1.0;
-        u.onstart = () => console.log('[VoiceClient] tts started:', text.slice(0, 60));
-        u.onerror = (e) => console.warn('[VoiceClient] tts error', e);
-        u.onend = () => console.log('[VoiceClient] tts ended');
+        u.onstart = () => {
+          this.setTtsPlaying(true);
+          console.log('[VoiceClient] tts started:', text.slice(0, 60));
+        };
+        u.onerror = (e) => {
+          this.setTtsPlaying(false);
+          console.warn('[VoiceClient] tts error', e);
+        };
+        u.onend = () => {
+          this.setTtsPlaying(false);
+          console.log('[VoiceClient] tts ended');
+        };
         synth.speak(u);
         console.log(
           '[VoiceClient] queued tts utterance, lang=',

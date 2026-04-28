@@ -1,9 +1,26 @@
-# Vocera
+<div align="center">
+  <h1>Vocera</h1>
+  <p><strong>Voice + chat AI agents grounded in your knowledge base. Multilingual, low-latency, self-hostable. Local-first MVP.</strong></p>
 
-Voice + chat AI agents grounded in your knowledge base. Multilingual, low-latency,
-self-hostable. Local-first MVP.
+  <p>
+    <img src="https://img.shields.io/badge/Next.js-14-black?logo=next.js" alt="Next.js" />
+    <img src="https://img.shields.io/badge/React-18-blue?logo=react" alt="React" />
+    <img src="https://img.shields.io/badge/TypeScript-5-blue?logo=typescript" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/PostgreSQL-Ready-blue?logo=postgresql" alt="PostgreSQL" />
+  </p>
 
-## What's working
+  <p>
+    <a href="#-features">Features</a> •
+    <a href="#-tech-stack">Tech Stack</a> •
+    <a href="#-getting-started">Getting Started</a> •
+    <a href="#-performance--latency-targets">Performance</a> •
+    <a href="#-multilingual">Multilingual</a>
+  </p>
+</div>
+
+---
+
+## 🌟 Features
 
 - Sign-up + login (email/password; optional Google OAuth)
 - Create-AI-Agent wizard with multilingual support (24 languages out of the box)
@@ -13,7 +30,7 @@ self-hostable. Local-first MVP.
 - Postgres with row-level security per workspace
 - Conversation/transcript logs
 
-## Stack
+## 💻 Tech Stack
 
 - **Frontend**: Next.js 14 (App Router) + React + Tailwind
 - **Backend**: Next.js Route Handlers + a custom WS server in the same Node process
@@ -23,40 +40,49 @@ self-hostable. Local-first MVP.
 
 No Docker. One process. `pnpm dev` boots everything.
 
-## Setup
+## 🚀 Getting Started
 
-### 1. Install deps
+### Prerequisites
 
-```
+- [Node.js](https://nodejs.org/) >= 20.0.0
+- [pnpm](https://pnpm.io/) >= 9.0.0
+- A PostgreSQL database (e.g., [Neon](https://neon.tech/), [Supabase](https://supabase.com/))
+- [Pinecone](https://pinecone.io/) account (free Starter tier works)
+
+### Installation
+
+**1. Install dependencies**
+
+```bash
 pnpm install
 ```
 
-### 2. Provide your Postgres URL + secrets
+**2. Provide your Postgres URL + secrets**
 
 Copy `.env.example` to `.env` and fill in at minimum:
 
-```
+```bash
 DATABASE_URL=postgres://...        # required
 AUTH_SECRET=$(openssl rand -base64 32)
 ```
 
-### 3. Run migrations
+**3. Run migrations**
 
-```
+```bash
 pnpm db:migrate
 ```
 
 This creates all tables and the row-level security policies.
 
-### 4. Boot
+**4. Boot up the project**
 
-```
+```bash
 pnpm dev
 ```
 
 Open http://localhost:3000.
 
-## What env vars to grab and when
+## 🔑 Environment Variables
 
 You can boot without anything except `DATABASE_URL` + `AUTH_SECRET`. Add more as you go — each unlocks a piece of the product.
 
@@ -70,7 +96,7 @@ For Pinecone, the index dimension must match the embedding provider:
 - Voyage-3 → **1024**
 - OpenAI text-embedding-3-small → **1536**
 
-## Latency targets
+## ⚡ Performance & Latency Targets
 
 Voice round-trip on a residential connection should land under ~800 ms p50 (end of your speech → first audible byte from the agent). Specific knobs:
 
@@ -80,7 +106,7 @@ Voice round-trip on a residential connection should land under ~800 ms p50 (end 
 - Anthropic prompt caching — cuts ~70% of token cost and ~80 ms TTFT after the first turn.
 - Single Node process — no IPC.
 
-## Multilingual
+## 🌍 Multilingual
 
 In the Create-Agent wizard, pick any subset of 24 supported languages. Behavior:
 
@@ -89,7 +115,7 @@ In the Create-Agent wizard, pick any subset of 24 supported languages. Behavior:
 - **TTS** picks a per-language voice from the agent's `voice_map` (overridable later).
 - Caller speaks an unsupported language → polite refusal in the default language.
 
-## Repo layout
+## 📁 Repository Layout
 
 See `src/`. Notable files:
 
@@ -102,6 +128,16 @@ See `src/`. Notable files:
 - `src/components/wizard/` — agent creation wizard incl. language picker
 - `src/components/voice/TalkButton.tsx` — browser audio + WS client
 
-## What's next
+## 🔮 Roadmap
 
 In rough order: Twilio inbound IVR, outbound dialer, lead extraction, Stripe metered billing, support widget, async ingestion, S3 + Redis, EU residency, deploy pipeline. See the full PRD section 13 + the `/loop` planning notes.
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues and feature requests are welcome! Feel free to check [issues page](#) if you want to contribute.
+
+## 📝 License
+
+This project is open-source. Please check the repository for any `LICENSE` files or specific licensing details.

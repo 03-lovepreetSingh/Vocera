@@ -1,6 +1,9 @@
 server.ts
 ws-server.ts
-src/server/ws/
+# Only the WS handler runs out-of-process — sessions.ts is a session-token
+# DB helper that ALSO runs on Vercel via /api/v1/agents/[id]/voice-session.
+# Excluding the whole directory breaks that route's webpack resolve.
+src/server/ws/voice.ts
 scripts/
 drizzle/
 uploads/

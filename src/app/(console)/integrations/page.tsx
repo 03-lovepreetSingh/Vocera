@@ -15,8 +15,8 @@
  */
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
-import { Check } from '@/components/icons';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Check, Eye, EyeOff } from '@/components/icons';
 
 type Status = 'connected' | 'available' | 'beta';
 interface Provider {
@@ -34,6 +34,15 @@ const TELEPHONY: Provider[] = [
   { name: 'Vonage', blurb: 'Voice & messaging APIs', status: 'available', logo: 'VO' },
   { name: 'WebRTC', blurb: 'Browser-based calling', status: 'beta', logo: 'WR' },
 ];
+
+interface ConnectedProvider {
+  id: number;
+  provider: string;
+  accountSidMasked: string;
+  phoneNumber: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 const TOOLS: { name: string; blurb: string }[] = [
   { name: 'Salesforce', blurb: 'Sync leads & calls' },
@@ -65,15 +74,91 @@ interface ApiKeyRow {
 }
 
 export default function IntegrationsPage() {
+  const [connected, setConnected] = useState<ConnectedProvider[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [twilioModalOpen, setTwilioModalOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    try {
+      const res = await fetch('/api/v1/integrations/telephony');
+      const json = await res.json();
+      if (!res.ok) {
+        setLoadError(typeof json?.error === 'string' ? json.error : 'Failed to load');
+        return;
+      }
+      setConnected((json?.providers as ConnectedProvider[]) ?? []);
+      setLoadError(null);
+    } catch (e: unknown) {
+      setLoadError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refetch();
+  }, [refetch]);
+
+  // Auto-dismiss the inline success toast after a beat.
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Find the active Twilio row (we only support a single Twilio creds row for v1).
+  const twilioRow =
+    connected?.find((p) => p.provider === 'twilio') ?? null;
+
+  function handleProviderClick(name: string) {
+    if (name === 'Twilio') setTwilioModalOpen(true);
+  }
+
+  async function disconnectTwilio(id: number) {
+    if (!confirm('Disconnect Twilio? Outbound calls will stop working until you reconnect.')) {
+      return;
+    }
+    const res = await fetch(`/api/v1/integrations/telephony?id=${id}`, { method: 'DELETE' });
+    if (res.ok || res.status === 204) {
+      setToast('Twilio disconnected.');
+      await refetch();
+    } else {
+      const json = await res.json().catch(() => ({}));
+      setLoadError(typeof json?.error === 'string' ? json.error : 'Failed to disconnect');
+    }
+  }
+
   return (
     <>
       <Topbar />
       <main className="flex-1 px-6 py-6">
+        {toast && (
+          <div className="mb-4 rounded-md bg-accent-soft px-3 py-2 text-xs text-accent">
+            {toast}
+          </div>
+        )}
+        {loadError && (
+          <div className="mb-4 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
+            {loadError}
+          </div>
+        )}
         <Section title="Telephony providers" blurb="Connect your phone numbers.">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {TELEPHONY.map((p) => (
-              <ProviderCard key={p.name} provider={p} />
-            ))}
+            {TELEPHONY.map((p) => {
+              const liveRow =
+                p.name === 'Twilio' && twilioRow ? twilioRow : null;
+              const overlayed: Provider = liveRow
+                ? { ...p, status: 'connected' }
+                : p;
+              return (
+                <ProviderCard
+                  key={p.name}
+                  provider={overlayed}
+                  connectedRow={liveRow}
+                  onConnect={() => handleProviderClick(p.name)}
+                  onDisconnect={liveRow ? () => disconnectTwilio(liveRow.id) : undefined}
+                />
+              );
+            })}
           </div>
         </Section>
 
@@ -90,6 +175,17 @@ export default function IntegrationsPage() {
           <WebhookPanel />
         </section>
       </main>
+
+      {twilioModalOpen && (
+        <TwilioConnectModal
+          onClose={() => setTwilioModalOpen(false)}
+          onSuccess={async () => {
+            setTwilioModalOpen(false);
+            setToast('Twilio connected.');
+            await refetch();
+          }}
+        />
+      )}
     </>
   );
 }
@@ -132,9 +228,21 @@ function Section({
 // Provider + tool cards
 // ---------------------------------------------------------------------------
 
-function ProviderCard({ provider }: { provider: Provider }) {
+function ProviderCard({
+  provider,
+  connectedRow,
+  onConnect,
+  onDisconnect,
+}: {
+  provider: Provider;
+  connectedRow?: ConnectedProvider | null;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
+}) {
   const { name, blurb, status, logo } = provider;
   const isConnected = status === 'connected';
+  // Only Twilio is interactive in v1; others remain disabled placeholders.
+  const isInteractive = name === 'Twilio';
   return (
     <div className="rounded-lg border border-line-soft bg-paper p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -145,19 +253,178 @@ function ProviderCard({ provider }: { provider: Provider }) {
       </div>
       <div className="text-sm font-semibold">{name}</div>
       <div className="mb-3 text-xs text-ink-3">{blurb}</div>
-      <button
-        type="button"
-        disabled
-        className={
-          isConnected
-            ? 'w-full rounded-md border border-line-soft bg-fill px-3 py-1.5 text-xs font-medium text-ink-3'
-            : 'w-full rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-paper disabled:opacity-60'
-        }
-        title="Provider connections ship in v1.1"
-      >
-        {isConnected ? 'Manage' : 'Connect'}
-      </button>
+      {isConnected && connectedRow && (
+        <div className="mb-3 space-y-0.5 rounded-md bg-fill px-2.5 py-1.5 text-[11px] text-ink-3">
+          <div className="font-mono">SID: {connectedRow.accountSidMasked}</div>
+          <div className="font-mono">{connectedRow.phoneNumber}</div>
+        </div>
+      )}
+      {isConnected ? (
+        <button
+          type="button"
+          onClick={onDisconnect}
+          disabled={!onDisconnect}
+          className="w-full rounded-md border border-line-soft bg-paper px-3 py-1.5 text-xs font-medium text-ink-3 hover:bg-fill disabled:opacity-60"
+        >
+          Disconnect
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={isInteractive ? onConnect : undefined}
+          disabled={!isInteractive}
+          className="w-full rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-paper disabled:opacity-60"
+          title={isInteractive ? undefined : 'Provider connections ship in v1.1'}
+        >
+          Connect
+        </button>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Twilio connect modal — POSTs creds to /api/v1/integrations/telephony
+// ---------------------------------------------------------------------------
+
+function TwilioConnectModal({
+  onClose,
+  onSuccess,
+}: {
+  onClose: () => void;
+  onSuccess: () => Promise<void> | void;
+}) {
+  const [accountSid, setAccountSid] = useState('');
+  const [authToken, setAuthToken] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [showToken, setShowToken] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sidId = useId();
+  const tokenId = useId();
+  const phoneId = useId();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/v1/integrations/telephony', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'twilio',
+          accountSid: accountSid.trim(),
+          authToken: authToken.trim(),
+          phoneNumber: phoneNumber.trim(),
+        }),
+      });
+      if (res.status === 201) {
+        await onSuccess();
+        return;
+      }
+      const json = await res.json().catch(() => ({}));
+      // The server returns either a string error or a zod flatten() shape.
+      let msg = 'Failed to connect';
+      if (typeof json?.error === 'string') {
+        msg = json.error;
+      } else if (json?.error?.fieldErrors) {
+        const fe = json.error.fieldErrors as Record<string, string[]>;
+        const first = Object.entries(fe).find(([, v]) => v?.length);
+        if (first) msg = `${first[0]}: ${first[1][0]}`;
+      }
+      setError(msg);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} labelledBy={sidId}>
+      <form onSubmit={submit}>
+        <h3 className="mb-1 text-sm font-semibold">Connect Twilio</h3>
+        <p className="mb-4 text-xs text-ink-3">
+          We encrypt your auth token at rest (AES-256-GCM) and never expose it after save.
+        </p>
+
+        <label htmlFor={sidId} className="mb-1 block text-xs font-medium">
+          Account SID
+        </label>
+        <input
+          id={sidId}
+          autoFocus
+          value={accountSid}
+          onChange={(e) => setAccountSid(e.target.value)}
+          placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          spellCheck={false}
+          className="mb-3 w-full rounded-md border border-line-soft bg-paper px-3 py-2 font-mono text-sm focus:border-accent focus:outline-none"
+        />
+
+        <label htmlFor={tokenId} className="mb-1 block text-xs font-medium">
+          Auth Token
+        </label>
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-line-soft bg-paper pr-2 focus-within:border-accent">
+          <input
+            id={tokenId}
+            type={showToken ? 'text' : 'password'}
+            value={authToken}
+            onChange={(e) => setAuthToken(e.target.value)}
+            placeholder="••••••••••••••••••••••••••••••••"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent px-3 py-2 font-mono text-sm outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => setShowToken((v) => !v)}
+            className="rounded p-1 text-ink-3 hover:text-ink"
+            aria-label={showToken ? 'Hide auth token' : 'Reveal auth token'}
+          >
+            {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+
+        <label htmlFor={phoneId} className="mb-1 block text-xs font-medium">
+          Phone Number
+        </label>
+        <input
+          id={phoneId}
+          value={phoneNumber}
+          onChange={(e) => setPhoneNumber(e.target.value)}
+          placeholder="+14155551234"
+          spellCheck={false}
+          className="mb-3 w-full rounded-md border border-line-soft bg-paper px-3 py-2 font-mono text-sm focus:border-accent focus:outline-none"
+        />
+
+        <p className="mb-4 rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          Twilio trial accounts can only call verified numbers and prepend a "this call
+          is from a trial account" message. Upgrade in Twilio Console to remove.
+        </p>
+
+        {error && (
+          <p className="mb-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-line-soft px-3 py-1.5 text-xs"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={busy || !accountSid.trim() || !authToken.trim() || !phoneNumber.trim()}
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-paper disabled:opacity-60"
+          >
+            {busy ? 'Connecting…' : 'Connect Twilio'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 

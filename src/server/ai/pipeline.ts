@@ -11,7 +11,7 @@
 import { embed } from './embed';
 import { type ChatMessage, streamCompletion } from './llm';
 import { SentenceBuffer } from './sentence-buffer';
-import { ElevenLabsStream, resolveVoiceId } from './tts';
+import { ElevenLabsStream, resolveVoiceId, type TTSOptions } from './tts';
 import { queryTopK } from '@/server/rag/pinecone';
 import { detectLanguageFromText, getLanguage, greetingFor } from '@/lib/languages';
 
@@ -23,6 +23,13 @@ export interface AgentContext {
   languages: string[];
   defaultLanguage: string;
   voiceMap: Record<string, string>;
+  /**
+   * Optional ElevenLabs output format override. Telco (Twilio) callers set this
+   * to `'mp3_22050_32'` so we receive a smaller MP3 we can transcode to μ-law
+   * 8 kHz in real time. Browser callers leave it undefined and inherit the
+   * `mp3_44100_128` default.
+   */
+  ttsFormat?: TTSOptions['format'];
 }
 
 export interface PipelineCallbacks {
@@ -141,7 +148,7 @@ export class VoicePipeline {
     // self-abort of this very turn. We only enable barge-in detection AFTER
     // the first LLM token has actually streamed.
     let elProducedAudio = false;
-    const tts = new ElevenLabsStream({ voiceId, language: lang });
+    const tts = new ElevenLabsStream({ voiceId, language: lang, format: this.agent.ttsFormat });
     this.currentTts = tts;
     const ttsOpen = tts.open().catch((err) => {
       console.warn('[pipeline] ElevenLabs unavailable — will use browser TTS:', err);

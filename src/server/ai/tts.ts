@@ -76,10 +76,12 @@ export interface TTSOptions {
   language?: string;
   /**
    * Output format. Default `mp3_44100_128` — works on every ElevenLabs tier
-   * including free. `pcm_16000` is paid-tier only and silently produces zero
-   * audio on free, which is the trap we're avoiding.
+   * including free. `pcm_16000` and `ulaw_8000` are paid-tier only and
+   * silently produce zero audio on free, which is the trap we're avoiding.
+   * `mp3_22050_32` is free-tier-compatible MP3 used by the Twilio path
+   * (transcoded to μ-law downstream).
    */
-  format?: 'pcm_16000' | 'mp3_44100_128';
+  format?: 'pcm_16000' | 'mp3_44100_128' | 'mp3_22050_32' | 'ulaw_8000';
 }
 
 export type TTSEvent =

@@ -8,13 +8,14 @@
  * Single Node process owns STT + LLM + TTS for the session — no IPC overhead.
  */
 import type { WebSocket } from 'ws';
-import { eq } from 'drizzle-orm';
-import { withWorkspace } from '@/db/client';
-import { conversations, messages } from '@/db/schema';
 import { DeepgramStream } from '@/server/ai/stt';
 import { VoicePipeline } from '@/server/ai/pipeline';
-import { newId } from '@/server/ids';
 import { deepgramLanguage, detectLanguageFromText, greetingFor } from '@/lib/languages';
+import {
+  createConversation,
+  persistMessage,
+  closeConversation,
+} from '@/server/conversations/persist';
 import type { takeSession } from './sessions';
 
 type ResolvedSession = NonNullable<Awaited<ReturnType<typeof takeSession>>>;
@@ -68,9 +69,11 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
   try {
     console.log('[ws/voice] creating conversation row...');
     conversationId = await createConversation({
-      workspaceId: 0,
       workspaceExternalId: agent.workspaceExternalId,
       agentId: agent.agentId,
+      channel: 'custom',
+      direction: 'inbound',
+      externalCallSid: null,
     });
     console.log('[ws/voice] conversation row created, id=', conversationId);
   } catch (err) {
@@ -206,81 +209,3 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
   });
 }
 
-// ─── DB helpers ─────────────────────────────────────────────
-async function createConversation(opts: {
-  workspaceId: number;
-  workspaceExternalId: string;
-  agentId: number;
-}): Promise<number> {
-  // Need workspace_id (numeric) — look it up from external id once per call.
-  const wsId = await resolveWorkspaceId(opts.workspaceExternalId);
-  return withWorkspace(wsId, async (tx) => {
-    const [row] = await tx
-      .insert(conversations)
-      .values({
-        externalId: newId('ca'),
-        workspaceId: wsId,
-        agentId: opts.agentId,
-        channel: 'custom',
-        direction: 'inbound',
-        status: 'in-progress',
-      })
-      .returning({ id: conversations.id });
-    return row.id;
-  });
-}
-
-async function persistMessage(opts: {
-  workspaceExternalId: string;
-  conversationId: number;
-  role: 'user' | 'agent' | 'tool' | 'system';
-  content: string;
-  language?: string;
-  ttftMs: number | null;
-}) {
-  const wsId = await resolveWorkspaceId(opts.workspaceExternalId);
-  await withWorkspace(wsId, async (tx) => {
-    // Determine next turn index — small race is fine for an MVP test surface.
-    const existing = await tx
-      .select({ ti: messages.turnIndex })
-      .from(messages)
-      .where(eq(messages.conversationId, opts.conversationId));
-    const nextTurn = (existing.reduce((m, r) => Math.max(m, r.ti), -1) ?? -1) + 1;
-    await tx.insert(messages).values({
-      workspaceId: wsId,
-      conversationId: opts.conversationId,
-      turnIndex: nextTurn,
-      role: opts.role,
-      content: opts.content,
-      language: opts.language ?? null,
-      ttftMs: opts.ttftMs ?? null,
-    });
-  });
-}
-
-async function closeConversation(opts: { workspaceExternalId: string; conversationId: number }) {
-  const wsId = await resolveWorkspaceId(opts.workspaceExternalId);
-  await withWorkspace(wsId, async (tx) => {
-    await tx
-      .update(conversations)
-      .set({ status: 'completed', endedAt: new Date() })
-      .where(eq(conversations.id, opts.conversationId));
-  });
-}
-
-// Avoid resolving once-per-call repeatedly: in-memory cache keyed by external id.
-const wsIdCache = new Map<string, number>();
-async function resolveWorkspaceId(externalId: string): Promise<number> {
-  const hit = wsIdCache.get(externalId);
-  if (hit) return hit;
-  const { db } = await import('@/db/client');
-  const { workspaces } = await import('@/db/schema');
-  const [row] = await db
-    .select({ id: workspaces.id })
-    .from(workspaces)
-    .where(eq(workspaces.externalId, externalId))
-    .limit(1);
-  if (!row) throw new Error(`workspace not found: ${externalId}`);
-  wsIdCache.set(externalId, row.id);
-  return row.id;
-}

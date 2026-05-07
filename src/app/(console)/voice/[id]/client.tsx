@@ -25,6 +25,7 @@ import {
   Wrench,
   Zap,
 } from '@/components/icons';
+import { PlaceTestCall } from './place-test-call';
 
 interface SurfaceFlags {
   ivr: boolean;
@@ -236,6 +237,12 @@ export function VoiceSetupClient({
           <CopyButton value={customUrl} variant="light" />
         </div>
       </div>
+
+      {/* ── Place test call ── */}
+      <PlaceTestCall
+        agentExternalId={agentExternalId}
+        deploymentExternalId={deploymentExternalId}
+      />
     </div>
   );
 }

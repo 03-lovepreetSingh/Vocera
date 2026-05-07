@@ -23,8 +23,14 @@ export interface STTOptions {
   language: string;
   /** When true and language is 'multi', the response includes per-utterance language. */
   detectLanguage?: boolean;
-  /** Sample rate of the input audio (we always use 16000). */
+  /** Sample rate of the input audio (browser=16000, telco/Twilio=8000). */
   sampleRate?: number;
+  /** Audio encoding (browser=linear16, telco/Twilio=mulaw). */
+  encoding?: 'linear16' | 'mulaw';
+  /** Endpointing window in ms. Browser default 700; tighten to ~300 for telco. */
+  endpointingMs?: number;
+  /** Utterance-end window in ms. Browser default 1200; tighten to ~800 for telco. */
+  utteranceEndMs?: number;
 }
 
 export type STTEvent =
@@ -57,7 +63,7 @@ export class DeepgramStream extends EventEmitter {
     // edge into hanging when combined with `language=multi`.
     const params = new URLSearchParams({
       model: 'nova-3',
-      encoding: 'linear16',
+      encoding: this.opts.encoding ?? 'linear16',
       sample_rate: String(this.opts.sampleRate ?? 16000),
       channels: '1',
       interim_results: 'true',
@@ -65,8 +71,8 @@ export class DeepgramStream extends EventEmitter {
       // 700 ms gives natural mid-sentence pause room (was 300 — too aggressive,
       // clipped users mid-thought). 1200 ms utterance-end matches typical
       // breath/thought boundaries for conversational speech.
-      endpointing: '700',
-      utterance_end_ms: '1200',
+      endpointing: String(this.opts.endpointingMs ?? 700),
+      utterance_end_ms: String(this.opts.utteranceEndMs ?? 1200),
       smart_format: 'true',
       language: this.opts.language,
     });

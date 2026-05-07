@@ -147,3 +147,29 @@ export const voiceDeployments = pgTable(
     wsIdx: index('voice_deployments_ws_idx').on(t.workspaceId),
   }),
 );
+
+/**
+ * Per-workspace telephony carrier credentials (Twilio / Exotel / Plivo / Vonage).
+ * `authTokenEncrypted` is AES-256-GCM ciphertext (b64 IV‖ciphertext‖tag) using
+ * TELEPHONY_ENC_KEY from env. Workspace-scoped via RLS.
+ */
+export const telephonyCredentials = pgTable(
+  'telephony_credentials',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    workspaceId: bigint('workspace_id', { mode: 'number' })
+      .notNull()
+      .references(() => workspaces.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(), // 'twilio' | 'exotel' | 'plivo' | 'vonage'
+    accountSid: text('account_sid').notNull(),
+    // AES-256-GCM ciphertext (base64 IV‖ciphertext‖tag).
+    authTokenEncrypted: text('auth_token_encrypted').notNull(),
+    phoneNumber: text('phone_number').notNull(), // E.164
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: uniqueIndex('telephony_credentials_uniq').on(t.workspaceId, t.provider, t.phoneNumber),
+    wsIdx: index('telephony_credentials_ws_idx').on(t.workspaceId),
+  }),
+);

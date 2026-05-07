@@ -36,10 +36,14 @@ export const conversations = pgTable(
     detectedLanguages: text('detected_languages').array(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp('ended_at', { withTimezone: true }),
+    // Carrier-side call identifier (e.g., Twilio CallSid). Lets inbound status /
+    // recording webhooks match back to the row created by the WS adapter.
+    externalCallSid: text('external_call_sid'),
   },
   (t) => ({
     wsStartedIdx: index('conv_ws_started_idx').on(t.workspaceId, t.startedAt),
     agentStartedIdx: index('conv_agent_started_idx').on(t.agentId, t.startedAt),
+    externalCallSidIdx: index('conversations_external_call_sid_idx').on(t.externalCallSid),
   }),
 );
 

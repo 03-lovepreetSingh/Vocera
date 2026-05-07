@@ -4,7 +4,7 @@
  *   • the signup server action (email/password)
  *   • the Auth.js Google signIn callback (lazy, on first OAuth sign-in)
  */
-import argon2 from 'argon2';
+import { hash as argon2Hash } from '@node-rs/argon2';
 import { db } from '@/db/client';
 import { apiKeys, memberships, users, workspaces } from '@/db/schema';
 import { newId } from '../ids';
@@ -27,7 +27,7 @@ export interface ProvisionResult {
 
 export async function provisionUser(input: ProvisionInput): Promise<ProvisionResult> {
   const email = input.email.toLowerCase();
-  const passwordHash = input.password ? await argon2.hash(input.password) : null;
+  const passwordHash = input.password ? await argon2Hash(input.password) : null;
 
   return db.transaction(async (tx) => {
     // 1) workspace
@@ -68,7 +68,7 @@ export async function provisionUser(input: ProvisionInput): Promise<ProvisionRes
     const secret = newId('key').slice(4); // random 10-char secret
     const prefix = `voc_live_${keyExt.slice(4, 10)}`;
     const plaintext = `${prefix}_${secret}`;
-    const hash = await argon2.hash(plaintext);
+    const hash = await argon2Hash(plaintext);
     await tx.insert(apiKeys).values({
       externalId: keyExt,
       workspaceId: ws.id,

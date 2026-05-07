@@ -5,7 +5,7 @@
  * `session` callback: we look up the user's primary membership once on token mint
  * and stash workspace_id in the JWT so request paths don't pay a DB round-trip.
  */
-import argon2 from 'argon2';
+import { verify } from '@node-rs/argon2';
 import { eq } from 'drizzle-orm';
 import NextAuth, { type DefaultSession } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
@@ -57,7 +57,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         )[0];
         if (!user?.passwordHash) return null;
 
-        const ok = await argon2.verify(user.passwordHash, password);
+        const ok = await verify(user.passwordHash, password);
         if (!ok) return null;
 
         return {

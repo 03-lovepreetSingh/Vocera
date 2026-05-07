@@ -4,7 +4,7 @@
  * Auth: session cookie (console UI). The plaintext key is returned ONCE on POST
  * — we never store it, only the argon2id hash + a public prefix for display.
  */
-import argon2 from 'argon2';
+import { hash as argon2Hash } from '@node-rs/argon2';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   const secret = newId('key').slice(4); // 10-char random secret
   const prefix = `voc_${scope}_${keyExt.slice(4, 10)}`;
   const plaintext = `${prefix}_${secret}`;
-  const hash = await argon2.hash(plaintext);
+  const hash = await argon2Hash(plaintext);
 
   // RLS: insert under the tenant fence so workspace_id is enforced.
   // session.user.id is the user's external id (string) — derive numeric if needed.

@@ -3,7 +3,7 @@ const config = {
   reactStrictMode: true,
   experimental: {
     serverActions: { bodySizeLimit: '110mb' },
-    serverComponentsExternalPackages: ['pg', 'argon2', 'pdf-parse', 'mammoth', 'ws'],
+    serverComponentsExternalPackages: ['pg', '@node-rs/argon2', 'pdf-parse', 'mammoth', 'ws'],
   },
   webpack: (cfg, { isServer }) => {
     cfg.resolve.alias = { ...cfg.resolve.alias, canvas: false };

@@ -214,3 +214,50 @@ export function deepgramLanguage(codes: readonly string[]): string {
   if (codes.length > 1) return 'multi';
   return 'en-US';
 }
+
+/**
+ * Map a Deepgram-detected language code back to the agent's enabled BCP-47
+ * code. Deepgram's `language=multi` mode returns ISO 639-1 short codes
+ * (`'hi'`, `'en'`, `'es'`) — but our agent config and voiceMap use BCP-47
+ * locales (`'hi-IN'`, `'en-US'`, `'es-MX'`). Without normalization,
+ * `enabled.includes(detected)` always returns false for non-English speech
+ * and the pipeline silently falls back to defaultLanguage — so the user's
+ * Hindi gets transcribed but the agent replies in English with an English
+ * voice. This function bridges the gap.
+ *
+ * Match strategy:
+ *   1. Exact case-insensitive match (handles when Deepgram returns full
+ *      BCP-47 like `'pt-BR'` or `'es-419'`).
+ *   2. Reverse-lookup via the LANGUAGES catalog: every enabled language
+ *      has its own `deepgram` code (`hi-IN` → `hi`). If `detected` matches
+ *      any enabled language's deepgram code, that's our hit.
+ *   3. Last resort: language-stem match (`'hi'` → first enabled `'hi-*'`).
+ *
+ * Returns the matched BCP-47 code or null if no enabled language fits.
+ */
+export function resolveDetectedLanguage(
+  detected: string | undefined | null,
+  enabled: readonly string[],
+): string | null {
+  if (!detected) return null;
+  const norm = detected.toLowerCase();
+
+  // 1) Exact match (case-insensitive) on the BCP-47 code itself.
+  const exact = enabled.find((l) => l.toLowerCase() === norm);
+  if (exact) return exact;
+
+  // 2) Match via the LANGUAGES catalog's `deepgram` field — that's the
+  //    authoritative mapping from BCP-47 → Deepgram code, and reversing it
+  //    gives us the canonical answer. (`hi` → `hi-IN`, `pt` → `pt-PT`, etc.)
+  const viaCatalog = enabled.find(
+    (l) => byCode.get(l)?.deepgram?.toLowerCase() === norm,
+  );
+  if (viaCatalog) return viaCatalog;
+
+  // 3) Stem match — handles cases where Deepgram returns a code we didn't
+  //    catalog (e.g., a regional variant). Picks the first enabled language
+  //    sharing the language stem.
+  const detStem = norm.split('-')[0];
+  const stemMatch = enabled.find((l) => l.toLowerCase().split('-')[0] === detStem);
+  return stemMatch ?? null;
+}

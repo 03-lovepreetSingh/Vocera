@@ -126,14 +126,69 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
     },
   });
 
-  // Open STT.
+  // Open STT — auto-reconnects on close. Deepgram WSes routinely close mid-
+  // session (idle timeout, server caps, transient network). Without
+  // reconnect, the second user turn vanishes silently because stt.send()
+  // becomes a no-op while the browser keeps streaming frames.
   const dgLang = deepgramLanguage(agent.languages);
   console.log('[ws/voice] opening Deepgram STT, language=', dgLang, 'detect=', agent.languages.length > 1);
-  const stt = new DeepgramStream({
-    language: dgLang,
-    detectLanguage: agent.languages.length > 1,
-    sampleRate: 16000,
-  });
+
+  const newStt = () =>
+    new DeepgramStream({
+      language: dgLang,
+      detectLanguage: agent.languages.length > 1,
+      sampleRate: 16000,
+    });
+
+  // Mutable so the close-handler can swap in a fresh instance. The
+  // closure inside `ws.on('message', ...)` captures `stt` by variable
+  // (not value), so reassignment is observed on subsequent frames.
+  let stt = newStt();
+
+  // Reconnection guard — prevents N close events triggering N opens in
+  // parallel during a flaky-network burst.
+  let reconnecting = false;
+  let sessionClosed = false;
+
+  const bindStt = (s: DeepgramStream) => {
+    s.on('event', async (e) => {
+      if (e.type === 'speech_started') {
+        console.log('[ws/voice] STT speech_started');
+        pipeline.onSpeechStarted();
+      } else if (e.type === 'final') {
+        console.log('[ws/voice] STT final:', JSON.stringify(e.text), 'lang=', e.language);
+        pipeline.onUserUtterance(e.text, e.language).catch((err) => {
+          console.error('[ws/voice] pipeline error', err);
+        });
+      } else if (e.type === 'partial') {
+        sendJson({ type: 'partial', text: e.text });
+      } else if (e.type === 'utterance_end') {
+        console.log('[ws/voice] STT utterance_end');
+      } else if (e.type === 'error') {
+        console.error('[ws/voice] STT error', e.error);
+        sendJson({ type: 'error', error: e.error });
+      }
+    });
+    s.on('close', async () => {
+      if (sessionClosed) return; // browser disconnected — don't reopen
+      if (reconnecting) return;
+      reconnecting = true;
+      console.warn('[ws/voice] Deepgram STT closed mid-session — reconnecting');
+      try {
+        const next = newStt();
+        await next.open();
+        stt = next;
+        bindStt(next);
+        console.log('[ws/voice] Deepgram STT reconnected');
+      } catch (err) {
+        console.error('[ws/voice] STT reconnect failed', err);
+        sendJson({ type: 'error', error: 'stt-reconnect-failed' });
+      } finally {
+        reconnecting = false;
+      }
+    });
+  };
+
   try {
     await stt.open();
     console.log('[ws/voice] Deepgram STT open');
@@ -148,24 +203,7 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
   // into greeting-style replies.
   pipeline.seedAssistantTurn(greetText);
 
-  stt.on('event', async (e) => {
-    if (e.type === 'speech_started') {
-      console.log('[ws/voice] STT speech_started');
-      pipeline.onSpeechStarted();
-    } else if (e.type === 'final') {
-      console.log('[ws/voice] STT final:', JSON.stringify(e.text), 'lang=', e.language);
-      pipeline.onUserUtterance(e.text, e.language).catch((err) => {
-        console.error('[ws/voice] pipeline error', err);
-      });
-    } else if (e.type === 'partial') {
-      sendJson({ type: 'partial', text: e.text });
-    } else if (e.type === 'utterance_end') {
-      console.log('[ws/voice] STT utterance_end');
-    } else if (e.type === 'error') {
-      console.error('[ws/voice] STT error', e.error);
-      sendJson({ type: 'error', error: e.error });
-    }
-  });
+  bindStt(stt);
 
   let inboundBinaryFrames = 0;
   let inboundBinaryBytes = 0;
@@ -178,10 +216,15 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
       } else if (inboundBinaryFrames % 100 === 0) {
         console.log('[ws/voice] inbound audio: frames=', inboundBinaryFrames, 'bytes=', inboundBinaryBytes);
       }
-      // Defense-in-depth: even if the browser gating fails (race, stale
-      // ttsPlaying flag), don't forward mic frames to Deepgram while the
-      // agent is mid-utterance — they're almost certainly speaker echo.
-      if (pipeline.isSpeaking()) return;
+      // Mic-gating is owned by the browser (audio/client.ts setTtsPlaying +
+      // muteMicUntil tail). We previously also gated here on
+      // `pipeline.isSpeaking()` as defense-in-depth, but that introduced a
+      // self-perpetuating deadlock: if `speaking` ever latched true (stale
+      // TTS listener, EL WS that won't close, etc.) frames stopped flowing
+      // → STT never fired speech_started → cancelInFlight() never ran to
+      // clear the flag. The agent went deaf on turn 2+. The browser-side
+      // gate is the source of truth; if it fails the user hears echo for a
+      // split second, which is recoverable. Permanent deafness isn't.
       stt.send(raw as Buffer);
     } else {
       try {
@@ -196,6 +239,9 @@ export async function handleVoiceConnection(ws: WebSocket, session: ResolvedSess
 
   ws.once('close', async (code, reason) => {
     console.log('[ws/voice] client closed', code, reason?.toString());
+    // Tell the auto-reconnect handler that this is a deliberate teardown,
+    // not a Deepgram-side close it should respond to.
+    sessionClosed = true;
     // Cancel any in-flight LLM stream / TTS WS so dropping the browser mid-turn
     // doesn't leak upstream sockets.
     try {

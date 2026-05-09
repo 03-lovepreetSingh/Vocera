@@ -114,8 +114,25 @@ export class DeepgramStream extends EventEmitter {
   }
 
   send(audio: Buffer | Uint8Array): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(audio);
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(audio);
+      return;
+    }
+    // Loud diagnostic for what was previously a silent-drop bug. If frames
+    // arrive while the Deepgram WS is closing/closed, we want the operator
+    // to see it — not have STT vanish without trace. Sampled at every 50th
+    // dropped frame to avoid log flooding (50 ≈ 1 second @ 50 fps).
+    this._dropped++;
+    if (this._dropped === 1 || this._dropped % 50 === 0) {
+      console.warn(
+        '[deepgram] dropping frame — ws.readyState=',
+        this.ws?.readyState,
+        'total_dropped=',
+        this._dropped,
+      );
+    }
   }
+  private _dropped = 0;
 
   async close(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {

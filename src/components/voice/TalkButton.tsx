@@ -79,7 +79,14 @@ export function TalkButton({ agentExternalId }: Props) {
             setError(e.error);
             break;
           case 'closed':
+            // WS died (server restart, network blip, normal end). Clear the
+            // client ref so the next click can call start() again — without
+            // this, the start() guard `if (clientRef.current) return` blocks
+            // re-connect silently and the button looks dead.
+            clientRef.current = null;
+            startingRef.current = false;
             setActive(false);
+            setStarting(false);
             break;
         }
       },

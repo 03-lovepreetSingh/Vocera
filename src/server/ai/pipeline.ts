@@ -13,7 +13,7 @@ import { type ChatMessage, streamCompletion } from './llm';
 import { SentenceBuffer } from './sentence-buffer';
 import { ElevenLabsStream, resolveVoiceId, type TTSOptions } from './tts';
 import { queryTopK } from '@/server/rag/pinecone';
-import { detectLanguageFromText, getLanguage, greetingFor } from '@/lib/languages';
+import { detectLanguageFromText, getLanguage, greetingFor, resolveDetectedLanguage } from '@/lib/languages';
 
 export interface AgentContext {
   agentId: number;
@@ -59,8 +59,24 @@ export class VoicePipeline {
   private history: ChatMessage[] = [];
   private turnIndex = 0;
   private speaking = false;
+  /** Heartbeat: bumped every time speaking flips on. A safety timer fires after
+   * SPEAKING_MAX_MS and hard-resets speaking if the same generation is still
+   * stuck — prevents permanent mic-gate deadlock if a TTS listener leaks. */
+  private speakingGen = 0;
+  // Tightened from 15s → 5s now that voice.ts no longer gates mic on
+  // `speaking`. The flag is now only used by onSpeechStarted (barge-in
+  // detection). A stuck flag costs at most one spurious cancelInFlight()
+  // call rather than a permanent deadlock.
+  private static readonly SPEAKING_MAX_MS = 5_000;
   private currentTurnAbort: AbortController | null = null;
   private currentTts: ElevenLabsStream | null = null;
+  /**
+   * TTS instances from prior turns whose EL WS hasn't closed yet. Their
+   * 'event' listeners would otherwise fire across turn boundaries and
+   * latch `speaking=true` on a new turn, deadlocking the mic gate.
+   * Drained on every cancelInFlight().
+   */
+  private staleTts = new Set<ElevenLabsStream>();
   private namespace: string;
   /** All scheduled timers we own — cleared by cancelInFlight()/teardown(). */
   private timers = new Set<NodeJS.Timeout>();
@@ -93,13 +109,21 @@ export class VoicePipeline {
     if (!text.trim()) return;
     console.log('[pipeline] onUserUtterance:', JSON.stringify(text), 'detected=', detectedLanguage);
 
-    // Pick language for response. If the user spoke an unsupported language,
-    // bail to default language with a polite refusal — the system prompt
-    // already instructs the LLM to handle this.
-    const lang =
-      detectedLanguage && this.agent.languages.includes(detectedLanguage)
-        ? detectedLanguage
-        : this.agent.defaultLanguage;
+    // Pick language for response. Deepgram's `language=multi` returns ISO
+    // 639-1 short codes (`'hi'`, `'en'`) — but our agent.languages array
+    // stores BCP-47 (`'hi-IN'`, `'en-US'`). Normalize via the catalog so
+    // `'hi'` → `'hi-IN'` rather than silently falling back to default and
+    // routing every non-English turn through the English voice.
+    const matched = resolveDetectedLanguage(detectedLanguage, this.agent.languages);
+    const lang = matched ?? this.agent.defaultLanguage;
+    console.log(
+      '[pipeline] language pick: detected=',
+      detectedLanguage,
+      'matched=',
+      matched,
+      'final=',
+      lang,
+    );
 
     this.history.push({ role: 'user', content: text });
     this.cb.onUserFinal(text, detectedLanguage);
@@ -153,19 +177,27 @@ export class VoicePipeline {
     const ttsOpen = tts.open().catch((err) => {
       console.warn('[pipeline] ElevenLabs unavailable — will use browser TTS:', err);
     });
+    // Generation-gated listener: every event checks `tts === this.currentTts`
+    // before mutating pipeline state. If a NEW turn has replaced currentTts,
+    // the stale listener fires only side-effect-free branches. Without this
+    // gate, a delayed EL packet from turn N can latch `speaking=true` on
+    // turn N+1 and deadlock the voice.ts:181 mic-gate.
     tts.on('event', (e) => {
+      const stale = this.currentTts !== tts;
       if (e.type === 'audio') {
+        if (stale) return; // drop late audio from a superseded turn
         if (!elProducedAudio) {
           // First audio chunk has left the building — agent is now audibly
           // speaking. Flip `speaking` on so any user audio frames Deepgram
           // sees from this point are treated as a potential barge-in. We
           // don't flip it on at turn-start because VAD residual from the
           // user's just-finalized utterance would self-abort the turn.
-          this.speaking = true;
+          this.armSpeaking();
         }
         elProducedAudio = true;
         this.cb.onAudio(e.data);
       } else if (e.type === 'final') {
+        if (stale) return; // late close from a superseded turn — don't flip flags
         this.speaking = false;
         this.cb.onAudioDone();
       } else if (e.type === 'error') {
@@ -241,6 +273,15 @@ export class VoicePipeline {
       this.speaking = false;
       if (this.currentTurnAbort === abort) this.currentTurnAbort = null;
       if (this.currentTts === tts) this.currentTts = null;
+      // The EL WS may still be open (free-tier sometimes ignores flush()).
+      // Hold the instance in a stale set so the next cancelInFlight() can
+      // drain it; also schedule a hard-close in case no new turn ever comes.
+      this.staleTts.add(tts);
+      const closeTimer = setTimeout(() => {
+        this.timers.delete(closeTimer);
+        this.disposeTts(tts);
+      }, 8000);
+      this.timers.add(closeTimer);
     }
 
     // Browser-TTS fallback for free-tier ElevenLabs (which silently produces
@@ -310,9 +351,40 @@ export class VoicePipeline {
     this.clearTimers();
     this.currentTurnAbort?.abort();
     this.currentTurnAbort = null;
-    this.currentTts?.abort();
+    if (this.currentTts) this.disposeTts(this.currentTts);
     this.currentTts = null;
+    // Drain any prior-turn TTS streams whose WS hadn't closed yet — without
+    // this, a late EL audio/final event on a stale stream can re-latch
+    // `speaking=true` on the new turn and deadlock the mic gate.
+    for (const stale of this.staleTts) this.disposeTts(stale);
+    this.staleTts.clear();
     this.speaking = false;
+    this.speakingGen++;
+  }
+
+  /**
+   * Set `speaking=true` and arm a hard-reset safety timer. If the same
+   * generation is still set after SPEAKING_MAX_MS, force-reset — guards
+   * against any future leak that re-introduces stuck-speaking state.
+   */
+  private armSpeaking() {
+    this.speaking = true;
+    const gen = ++this.speakingGen;
+    const safety = setTimeout(() => {
+      this.timers.delete(safety);
+      if (this.speaking && this.speakingGen === gen) {
+        console.warn('[pipeline] safety: speaking flag stuck for', VoicePipeline.SPEAKING_MAX_MS, 'ms — force-reset');
+        this.speaking = false;
+      }
+    }, VoicePipeline.SPEAKING_MAX_MS);
+    this.timers.add(safety);
+  }
+
+  /** Detach listeners and force-close a TTS stream's WS. Idempotent. */
+  private disposeTts(tts: ElevenLabsStream) {
+    try { tts.removeAllListeners(); } catch {}
+    try { tts.abort(); } catch {}
+    this.staleTts.delete(tts);
   }
 
   private async retrieve(query: string): Promise<string[]> {

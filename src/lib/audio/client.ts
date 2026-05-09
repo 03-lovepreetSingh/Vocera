@@ -69,6 +69,58 @@ export class VoiceClient {
     return this.ttsPlaying || Date.now() < this.muteMicUntil;
   }
 
+  // Diagnostic: emits one line per second describing the mic-gate state, frame
+  // counts, AND peak amplitude since last tick. Distinguishes "frames flowing
+  // but silent" (OS mic muted, AudioContext suspended) from "frames flowing
+  // with audio" (Deepgram-side issue) from "no frames" (worklet dead).
+  private framesSentSinceTick = 0;
+  private framesDroppedSinceTick = 0;
+  private maxAmplitudeSinceTick = 0;
+  private diagTickerStarted = false;
+  private startDiagTicker() {
+    if (this.diagTickerStarted) return;
+    this.diagTickerStarted = true;
+    setInterval(() => {
+      const sent = this.framesSentSinceTick;
+      const dropped = this.framesDroppedSinceTick;
+      const peak = this.maxAmplitudeSinceTick;
+      this.framesSentSinceTick = 0;
+      this.framesDroppedSinceTick = 0;
+      this.maxAmplitudeSinceTick = 0;
+      if (sent === 0 && dropped === 0) return;
+      const ctxState = this.ctx?.state ?? 'no-ctx';
+      const trackState = this.mediaStream?.getAudioTracks()[0]?.readyState ?? 'no-track';
+      const trackEnabled = this.mediaStream?.getAudioTracks()[0]?.enabled ?? false;
+      // Peak / 32768 is the normalised PCM-16 sample amplitude (0..1).
+      const peakNorm = peak / 32768;
+      const audioState =
+        peakNorm < 0.01 ? 'SILENT' : peakNorm < 0.05 ? 'quiet' : 'audible';
+      console.log(
+        '[VoiceClient.diag] mic ttsPlaying=', this.ttsPlaying,
+        'muteMs=', Math.max(0, this.muteMicUntil - Date.now()),
+        'sent=', sent,
+        'dropped=', dropped,
+        'peak=', peakNorm.toFixed(3),
+        'audio=', audioState,
+        'ctx=', ctxState,
+        'track=', trackState,
+        'enabled=', trackEnabled,
+      );
+    }, 1000);
+  }
+
+  /** Compute peak |sample| across an Int16 PCM frame for diagnostic amplitude tracking. */
+  private trackFrameAmplitude(buf: ArrayBuffer) {
+    const view = new Int16Array(buf);
+    let peak = 0;
+    // Stride-sample to keep this cheap; 1 in 8 samples is enough for peak detection.
+    for (let i = 0; i < view.length; i += 8) {
+      const v = view[i] < 0 ? -view[i] : view[i];
+      if (v > peak) peak = v;
+    }
+    if (peak > this.maxAmplitudeSinceTick) this.maxAmplitudeSinceTick = peak;
+  }
+
   private setTtsPlaying(playing: boolean) {
     this.ttsPlaying = playing;
     if (!playing) {
@@ -152,9 +204,14 @@ export class VoiceClient {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
         // Half-duplex: drop frames while the agent is talking (and for a brief
         // tail after) so the speaker→mic path can't echo into Deepgram.
-        if (this.isMicMuted()) return;
+        if (this.isMicMuted()) {
+          this.framesDroppedSinceTick++;
+          return;
+        }
+        this.framesSentSinceTick++;
         this.ws.send(ev.data);
       };
+      this.startDiagTicker();
       src.connect(node);
       // CRITICAL: route the worklet output to a muted gain → destination.
       // Without a live downstream consumer, Chromium throttles the worklet's
